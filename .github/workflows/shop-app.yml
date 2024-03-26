@@ -1,71 +1,98 @@
-
 name: buildapp
 
-# Controls when the action will run.
 on:
-  # Triggers the workflow on push or pull request events but only for the master branch
   push:
-    branches: [ master, new-random ]
+    branches: [master, new-random]
   pull_request:
-    branches: [ master ]
-
-  # Allows you to run this workflow manually from the Actions tab
+    branches: [master]
   workflow_dispatch:
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
   buildapp:
-    # The type of runner that the job will run on
     runs-on: ${{matrix.os}}
-    container:
-      image: ${{matrix.cfg.container}}
-
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest]
-        cfg:
-          - { container: "containers.common-lisp.net/cl-docker-images/sbcl:latest", lisp: sbcl }
-          - { container: "containers.common-lisp.net/cl-docker-images/ccl:latest", lisp: ccl }
+        os: [ubuntu-latest, windows-latest]
+        lisp: [sbcl]
 
     steps:
-    - uses: actions/checkout@v4
-      with:
-        submodules: true
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
 
-    - name: install up-to-date ASDF
-      shell: bash
-      run: |
-        cd ${HOME}
-        mkdir lisp
-        cd lisp
-        git clone https://gitlab.common-lisp.net/asdf/asdf.git
-        cd asdf
-        git checkout release
-        make
+      - name: Install SBCL (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          choco install sbcl
 
-    - name: install quicklisp
-      shell: bash
-      run: |
-        /usr/local/bin/install-quicklisp
+      - name: install up-to-date ASDF (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cd ${HOME}
+          mkdir lisp
+          cd lisp
+          git clone https://gitlab.common-lisp.net/asdf/asdf.git
+          cd asdf
+          git checkout release
+          make
 
-    - name: install buildapp
-      shell: bash
-      run: |
-        ${{ matrix.cfg.lisp }} --load ${HOME}/quicklisp/setup.lisp --eval '(ql:quickload "buildapp")' --eval '(uiop:quit 0)'
+      - name: Install Lisp (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sbcl cl-cffi cl-asdf
 
-    - name: build buildapp binary
-      shell: bash
-      run: |
-        cd ${HOME}/quicklisp/dists/quicklisp/software/buildapp*
-        echo "Building buildapp with lisp = ${{ matrix.cfg.lisp }}"
-        make LISP=${{ matrix.cfg.lisp }} install
+      - name: install quicklisp (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          iwr -useb https://beta.quicklisp.org/quicklisp.lisp | sbcl --load -
 
-    - name: build and install shop app
-      shell: bash
-      run: |
-        cd shop3/buildapp ; make clean ; make LISP=${{ matrix.cfg.lisp }} install
+      - name: install up-to-date ASDF (Ubuntu)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          cd ${HOME}
+          mkdir lisp
+          cd lisp
+          git clone https://gitlab.common-lisp.net/asdf/asdf.git
+          cd asdf
+          git checkout release
+          make
 
-    - name: test shop apps
-      shell: bash
-      run: |
-        cd shop3/buildapp ; ./test.sh
+      - name: install quicklisp (Ubuntu)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          curl -O https://beta.quicklisp.org/quicklisp.lisp
+          echo '(quicklisp-quickstart:install)' | sbcl --load quicklisp.lisp
+
+      - name: install buildapp
+        shell: bash
+        run: |
+          sbcl --load ${HOME}/quicklisp/setup.lisp --eval '(ql:quickload "buildapp")' --eval '(uiop:quit 0)'
+
+      - name: build buildapp binary
+        shell: bash
+        run: |
+          cd ${HOME}/quicklisp/dists/quicklisp/software/buildapp*
+          echo "Building buildapp with lisp = sbcl"
+          make LISP=sbcl install
+
+      - name: build and install shop app
+        shell: bash
+        run: |
+          cd shop3/buildapp ; make clean ; make LISP=sbcl install
+
+      - name: Upload buildapp binary as artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: buildapp-binary-${{ matrix.os }}-sbcl
+          path: shop3/buildapp/shop
+
+      - name: test shop apps
+        shell: bash
+        run: |
+          cd shop3/buildapp ; ./test.sh
